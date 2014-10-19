@@ -9,4 +9,4 @@ The files are :
 
 * project.Rmd: R markdown document for course project report.
 * project.html: Compiled html file for course project report.
-* results : Folder containing output of all 20 prediction files.
+* result : Folder containing output of all 20 prediction files.
