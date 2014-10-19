@@ -1,0 +1,225 @@
+---
+title: "Human Activity Recognition Model"
+output:
+  html_document:
+    keep_md: yes
+---
+
+# Summary
+
+The goal is to use data from accelerometers placed on the belt, forearm, arm, and dumbell of six participants to predict how well they were doing the exercise.
+Five different exercise classifications are considered, "Exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+The purpose of this report is to describe the process and result for building a model to predict the classification of the correctness of an individual exercise.
+
+For more information see [http://groupware.les.inf.puc-rio.br/har]( http://groupware.les.inf.puc-rio.br/har) .
+
+# Load Data
+
+The data used are :
+
+* Training set [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv), this data is used to build the model.
+
+* Testing set [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv), this data is used for the submit ot automatic grader. 
+
+We load training and testing data sets by converting empty and #DIV/0! values as missing values.
+
+```{r ,message=FALSE}
+library(caret)
+library(corrplot)
+library(kernlab)
+library(randomForest)
+
+set.seed(12345)
+
+train.url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test.url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+file.train <- "pml-training.csv"
+file.test <- "pml-testing.csv"
+
+if (!file.exists(file.train)){
+    download.file(train.url, file.train)
+}
+if (!file.exists(file.test)){
+    download.file(test.url, file.test)
+}
+
+pml.train <- read.csv(file.train, na.strings=c("NA","","#DIV/0!"), header=TRUE)
+pml.test <- read.csv(file.test, na.strings=c("NA","","#DIV/0!"), header=TRUE)
+
+```
+
+
+# Explore Data
+
+We explore data from the train data set.
+```{r ,message=FALSE}
+# dimension
+dim(pml.train)
+# summary of the classes variable (levels).
+summary(pml.train$classe)
+
+# NA variables count for each columns combination.
+table(colSums(is.na(pml.train)))
+
+```
+The training data have ```r dim(pml.train)[1] ``` records with ```r dim(pml.train)[2] ``` variables. 
+The outcome variable ***classe*** has ```r nlevels(pml.train$classe)``` factors levels.
+
+
+# Filter Data
+
+We filter the training data :
+
+* Remove variables with 80% missing  values.
+
+* Remove near zero covariates
+
+* Remove the columns that aren't the predictor variables ("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+
+* Remove high correlated variables > 0.9.
+
+```{r, message=FALSE}
+# Remove variables with 80% Missing values 
+selected.columns <- colSums(is.na(pml.train)) <  0.8 *nrow(pml.train)
+pml.train <- pml.train[,selected.columns]  
+#Remove near zero covariates
+nsv <- nearZeroVar(pml.train, saveMetrics = T)
+pml.train <- pml.train[, !nsv$nzv]
+#Remove the columns that aren't the predictor variables 
+pml.train <- pml.train[, -which(colnames(pml.train) %in% c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
+              "cvtd_timestamp", "new_window", "num_window"))]
+
+```
+
+
+Plot variables correlation, then remove high correlated variables.
+```{r , message=FALSE}
+cor.data <- cor(subset(pml.train, select=-c(classe)))
+corrplot(cor.data, order="hclust", tl.cex=0.5)
+
+removecor = findCorrelation(cor.data, cutoff = .90, verbose = F)
+pml.train = pml.train[,-removecor]
+```
+
+
+After filtering, the training data set has ```r nrow(training) ``` samples and ```r ncol(training)``` variables.
+
+# Build model
+
+## Partition Data
+
+The data set ***pml.train*** is split into training and testing sets in a 70/30 ratio to train the model and then test it against testing data set.
+
+```{r ,message=FALSE}
+partition <- createDataPartition(y = pml.train$classe, p = 0.7, list = FALSE)
+training <- pml.train[partition, ]
+testing <-  pml.train[-partition, ]
+```
+
+
+We build the prediction models on the training data.  
+We try two models : Booting Model, Random Forest.
+Parameters will be tuned via 4-fold cross validation.
+
+## Boosting model
+
+Use the boosting model with a 4-fold cross validation to predict **classe** with all other predictors.
+
+```{r ,message=FALSE}
+boostModel <- train(classe ~ ., method = "gbm", data = training, preProcess=c("center", "scale"), verbose = F, trControl = trainControl(method = "cv", number = 4))
+print(boostModel)
+```
+
+
+### Boosting model evaluation with testing data set
+```{r ,message=FALSE}
+prediction.boost <- predict(boostModel,testing)
+confusion.boost <- confusionMatrix(prediction.boost,testing$classe)
+confusion.boost
+```
+
+The accuracy of the model is ```r round(max(boostModel$results$Accuracy),3) ```.
+The accuracy against the testing data set is ```r round(confusion.boost$overall[["Accuracy"]],3) ```.
+
+
+Plot the accuracy of the boost model.
+```{r ,message=FALSE}
+plot(boostModel)
+```
+
+##Random forests model
+
+Use the Random forests model with a 4 fold cross validation to predict **classe** with all other predictors.
+
+
+```{r ,message=FALSE}
+rfModel <- train(classe ~ .,  method="rf",  data=training, preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4))
+print(rfModel)
+```
+
+
+### Random forests evaluation testing data set
+```{r ,message=FALSE}
+prediction.rf <- predict(rfModel,testing)
+confusion.rf <- confusionMatrix(prediction.rf,testing$classe)
+confusion.rf
+```
+
+The accuracy of the model is ```r round(max(rfModel$results$Accuracy),3) ```.
+The accuracy against the testing data set is ```r round(confusion.rf$overall[["Accuracy"]],3) ```.
+
+
+Plot the accuracy of the Random forests model.
+```{r ,message=FALSE}
+plot(rfModel)
+```
+
+
+# Conclusion (Accuracy, Out of sample error)
+
+The accuracies for both model are :
+
+ * Boost model accuracy : ```r round(confusion.boost$overall[["Accuracy"]],3) ``` (Out of sample error is ```r 1-round(confusion.boost$overall[["Accuracy"]],3) ```).
+ 
+ * Random Forest model accuracy : ```r round(confusion.rf$overall[["Accuracy"]],3) ``` (Out of sample error is ```r 1-round(confusion.rf$overall[["Accuracy"]],3) ```).
+
+The random forest has better accuracy the the boosting model. So we use it to predict the Test data set.
+
+The final Ramdom forest model
+```{r ,message=FALSE}
+rfModel$finalModel
+```
+
+The most important predictors are :
+```{r ,message=FALSE}
+#importance(model$finalModel)
+plot(varImp(rfModel, scale=FALSE), top=20)
+```
+
+
+#Predict the test set
+
+Predict the test data set with the random forest model.
+
+```{r ,message=FALSE}
+test.prediction <- predict(rfModel, pml.test)
+test.prediction
+```
+
+
+Write the predicted results.
+
+```{r, echo=TRUE}
+  dir.create("result", showWarnings = FALSE)
+  pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+      filename = paste0("result/problem_id_",i,".txt")
+      write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+  }
+  
+  pml_write_files(test.prediction)
+```
+
